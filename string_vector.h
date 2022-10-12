@@ -11,7 +11,6 @@ typedef struct {
 
 
 void vec_init(string_vector *);
-static void vec_resize(string_vector *, int);
 void vec_add(string_vector *, void *);
 
 #endif

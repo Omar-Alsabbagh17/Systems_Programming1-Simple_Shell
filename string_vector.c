@@ -3,6 +3,8 @@
 
 #include "string_vector.h"
 
+static void vec_resize(string_vector *, int);
+
 void vec_init(string_vector *v)
 {
     v->capacity = INIT_CAP;

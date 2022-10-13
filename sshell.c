@@ -13,6 +13,7 @@
 #define CMDLINE_MAX 512
 # define ARGS_MAX 16
 # define FAILED 1
+# define MAX_PIPE 10
 
 typedef struct
 {
@@ -27,6 +28,13 @@ int execute(program * , unsigned int );
 int main(void)
 {
         char cmd[CMDLINE_MAX];
+        string_vector dir_stack;
+        vec_init(&dir_stack);
+        char cwd[CMDLINE_MAX];
+        getcwd(cwd, sizeof(cwd));
+        vec_add(&dir_stack, cwd);
+        pid_t pid;
+        int screen_stdout;
 
         while (1) {
                 char *nl;
@@ -63,7 +71,6 @@ int main(void)
                 }
                 else if (!strcmp(cmd, "pwd"))
                 {
-                        char cwd[CMDLINE_MAX];
                         if (getcwd(cwd, sizeof(cwd)) != NULL) 
                         {
                                 // executed sucessfully
@@ -98,6 +105,7 @@ int main(void)
                 /* ============ Regular command  =====================================================*/
                 
                 else{
+                        program prog;
                         string_vector v;
                         vec_init(&v);
                         char* cmd_copy = (char*) malloc(strlen(cmd)+1);
@@ -105,36 +113,143 @@ int main(void)
                         char failed = cmd_parser(cmd_copy, &v);
                         if (failed)
                                 continue;
-                        char is_program = 1; // to distinguish program from argument
+                        char is_command = 1; // to distinguish command from argument
                         char is_out_redirection = 0;
-                        char is_pip = 0;
+                        char is_pushd = 0;
                         char finished_input_redirection = 0;
-                        unsigned int count = 0; // to keep track of arguments
-                        program prog;
+                        unsigned int args_count = 0; // to keep track of arguments
+                        int pipes_count = 0;
+                        int total_pipes = 0; // total number of pipes in cmd
+
+                        for (int i = 0; i < v.total; i++)
+                        {
+                                if (!strcmp(v.items[i], "|"))
+                                        total_pipes++;
+                        }
+                        int fd[total_pipes+1][2];
+                        pid_t pids[total_pipes+2];
+                        int pip_ret_status[total_pipes+2];
                         
                         for (int i = 0; i < v.total; i++)
                         {
-                                if (count >= ARGS_MAX)
+                                if (args_count >= ARGS_MAX)
                                 {
                                         fprintf(stderr, "ERROR: too many arguments\n");
                                         break;
                                 }
-                                if (is_program)
-                                {
-                                       
-                                        count = 0;
-                                        prog.command = v.items[i];
-                                        prog.args[count++]=v.items[i];
 
+                                if ((total_pipes != 0) && (pipes_count == total_pipes) && (i == (v.total-1)))
+                                {
+                                        if (is_command)
+                                        {
+                                                prog.command= v.items[i];
+                                                args_count = 0; 
+                                        }
+
+                                        prog.args[args_count++]=v.items[i];
+                                        pid = fork();
+                                        if (!pid) //child
+                                        {
+                                                dup2(fd[pipes_count][0], STDIN_FILENO);
+                                                // close current pipe
+                                                close(fd[pipes_count][0]);
+                                                close(fd[pipes_count][1]);
+                                                // close previouse pipe
+                                                close(fd[pipes_count-1][0]); 
+                                                close(fd[pipes_count-1][1]);
+                                                char* args_list[args_count+1];
+                                                for (unsigned int i = 0; i < args_count; i++)
+                                                {
+                                                        args_list[i] = prog.args[i];
+                                                        //printf("%s\n", args_list[i]);
+                                                }
+                                                if (is_out_redirection)
+                                                {       int fd = open(v.items[i], O_RDWR);
+                                                        screen_stdout = dup(STDOUT_FILENO);
+                                                        dup2(fd, STDOUT_FILENO);
+                                                        args_list[args_count-1]= NULL;
+                                                }
+                                                else
+                                                    args_list[args_count]= NULL;
+                                                execvp(prog.command,  args_list);
+                                        }
+                                        else
+                                        {
+                                                pids[pipes_count+1] = pid;
+                                                // close current pipe
+                                                close(fd[pipes_count][0]);
+                                                close(fd[pipes_count][1]);
+                                                // close previouse pipe
+                                                close(fd[pipes_count-1][0]); 
+                                                close(fd[pipes_count-1][1]);
+                                                
+                                                int status;
+                                                for (int j = 1; j < total_pipes+2; j++)
+                                                        waitpid(pids[j], &pip_ret_status[j], 0);
+                                                        
+                                                fprintf(stderr, "+ completed '%s' ", cmd);
+                                                for (int j = 1; j < total_pipes+2; j++)
+                                                        fprintf(stderr, "[%d]", WEXITSTATUS(pip_ret_status[j]));
+                                                fprintf(stderr, "\n");
+                                        }
+                                }
+
+                                if (!strcmp(v.items[i], "pushd"))
+                                {
+                                        is_pushd = 1;
+                                        char abs_path[CMDLINE_MAX];
+                                        getcwd(abs_path, sizeof(abs_path));
+                                        strcat(abs_path, "/");
+                                        strcat(abs_path, v.items[i+1]);
+                                        //printf("%s\n", abs_path);
+                                        vec_add(&dir_stack, abs_path);
+                                        if (chdir(abs_path) != 0)
+                                        {
+                                                fprintf(stderr, "Error: no such directory\n");
+                                                fprintf(stderr, "+ completed 'pushd %s' [1]\n", v.items[i+1]);
+                                        }
+                                        else
+                                                fprintf(stderr, "+ completed 'pushd %s' [0]\n", v.items[i+1]);
+                                }
+                                else if (is_pushd)
+                                {
+                                        is_pushd = 0;
+                                        continue;
+                                }
+                                 else if (!strcmp(v.items[i], "popd"))
+                                 {
+                                        if (dir_stack.total == 1)
+                                        {
+                                                fprintf(stderr, "Error: directory stack empty\n");
+                                                continue;
+                                        }
+                                        char * popd_dir = vec_pop(&dir_stack);
+                                        chdir(popd_dir);
+                                        fprintf(stderr, "+ completed 'popd' [0]\n");
+
+                                 }
+                                else if (!strcmp(v.items[i], "dirs"))
+                                {
+                                        for (int i = 0; i < dir_stack.total; ++i)
+                                        {
+                                                printf("%s\n", dir_stack.items[i]);
+                                        }
+                                        fprintf(stderr, "+ completed 'dirs' [0]\n");
+                                }
+                                else if (is_command)
+                                {
+                                        args_count = 0;
+                                        prog.command = v.items[i];
+                                        prog.args[args_count++]=v.items[i];
+                                        is_command = 0; 
                                         /* if we reach end of cmd, then it means
                                          it's command without any arguments */
-                                        if (i == (v.total-1))
+                                        if (i == (v.total-1) && (total_pipes == 0))
                                         {
-                                                retval = execute(&prog, count);
+                                                retval = execute(&prog, args_count);
                                                 fprintf(stderr, "+ completed '%s' [%d]\n", cmd, retval);
-
                                         }
-                                        is_program = 0; 
+                                        
                                 }
                                 else if (!strcmp(v.items[i], ">"))
                                 {
@@ -145,8 +260,8 @@ int main(void)
                                 else if (!strcmp(v.items[i], "<"))
                                 {
                                         finished_input_redirection = 1;
-                                        prog.args[count++]=v.items[i+1];
-                                        retval = execute(&prog, count);
+                                        prog.args[args_count++]=v.items[i+1];
+                                        retval = execute(&prog, args_count);
                                         
                                         fprintf(stderr, "+ completed '%s' [%d]\n", cmd, retval);
                                         continue;
@@ -155,28 +270,78 @@ int main(void)
                                 else if (finished_input_redirection)
                                 {
                                         finished_input_redirection = 0;
-                                        is_program = 1;
+                                        is_command = 1;
                                         continue;
                                 }
                                 else if (!strcmp(v.items[i], "|"))
                                 {
-                                        
                                         // excute
                                         // store exit status in an array
                                         // redirect 
-                                        is_pip = 1;
-                                        is_program = 1;
-                                        prog.command = NULL;
-                                        continue;
+                                        pipes_count++;
+                                        pipe(fd[pipes_count]);
+                                        pid = fork();
+                                        if (!pid) //child
+                                        {
+                                                if (pipes_count == 1)
+                                                {
+                                                        close(fd[pipes_count][0]); // no need for read access 
+                                                        dup2(fd[pipes_count][1], STDOUT_FILENO); // redirect output to pipe
+                                                        close(fd[pipes_count][1]);
+                                                        char* args_list[args_count+1];
+                                                        for (unsigned int i = 0; i < args_count; i++)
+                                                        {
+                                                                args_list[i] = prog.args[i];
+                                                                //fprintf(stderr, "%s\n", args_list[i]);
+                                                        }
+                                                        //fprintf(stderr, "end\n");
+                                                        args_list[args_count]= NULL;
+                                                       execvp(prog.command,  args_list);                                                         
+                                                }
+                                                //else if (pipes_count > 1 && (pipes_count < total_pipes))
+                                                else
+                                                {
+                                                        dup2(fd[pipes_count-1][0], STDIN_FILENO);
+                                                        dup2(fd[pipes_count][1], STDOUT_FILENO);
+                                                         // close current pipe
+                                                        close(fd[pipes_count][0]);
+                                                        close(fd[pipes_count][1]);
+                                                        // close previouse pipe
+                                                        close(fd[pipes_count-1][0]); 
+                                                        close(fd[pipes_count-1][1]);
+                                                        char* args_list[args_count+1];
+                                                        for (unsigned int i = 0; i < args_count; i++)
+                                                        {
+                                                                args_list[i] = prog.args[i];
+                                                                //fprintf(stderr, "%s\n", args_list[i]);
+                                                        }
+                                                        //fprintf(stderr, "end\n");
+                                                        args_list[args_count]= NULL;
+                                                       execvp(prog.command,  args_list);      
+                                                }
+                                                
 
+                                        }
+                                        else // parent
+                                        {
+                                                pids[pipes_count] = pid;
+                                                is_command = 1;
+                                                prog.command = NULL;
+                                                continue;
+                                        }
+                                        
                                 }
-                                else if (i == (v.total-1)) // reached end of cmd
+                                
+                                
+
+
+                                else if ((i == (v.total-1)) && (total_pipes == 0)) // reached end of cmd and no pipes
                                 {                                        
                                         if (is_out_redirection)
                                         {       int fd = open(v.items[i], O_RDWR);
-                                                int screen_stdout = dup(STDOUT_FILENO);
+                                                screen_stdout = dup(STDOUT_FILENO);
                                                 dup2(fd, STDOUT_FILENO);
-                                                retval = execute(&prog, count);
+                                                retval = execute(&prog, args_count);
                                                 // restore stdout back to terminal
                                                 dup2(screen_stdout, STDOUT_FILENO);
                                                 close(screen_stdout);
@@ -187,8 +352,8 @@ int main(void)
                                         
                                         else
                                         {
-                                                prog.args[count++]=v.items[i];
-                                                retval = execute(&prog, count);
+                                                prog.args[args_count++]=v.items[i];
+                                                retval = execute(&prog, args_count);
                                                 fprintf(stderr, "+ completed '%s' [%d]\n", cmd, retval);
                                         }
                                         break;
@@ -196,7 +361,7 @@ int main(void)
                                 }
                                 else
                                 {
-                                        prog.args[count++]=v.items[i];
+                                        prog.args[args_count++]=v.items[i];
                                 }
                                 
                         }
@@ -226,7 +391,7 @@ char cmd_parser(char* cmd, string_vector* v)
                                 if (token[i] == '>' || token[i] == '<')
                                 {
                                         char delimeter[2] = {token[i], '\0'}; //since strtok doesn't accpet char
-                                        found_sub_token = 1;
+                                        found_sub_token = 1; // true if we find > or <  without whitespaces
                                         char* token_copy;
                                         token_copy = (char*) malloc(strlen(token)+1);
                                         //memcpy(token_copy, token, strlen(token));
@@ -282,7 +447,7 @@ char cmd_parser(char* cmd, string_vector* v)
                         {
                                 if (!strcmp(v->items[j], "|"))
                                 {
-                                        fprintf(stderr, "ERROR: mislocated output redirection\n");
+                                        fprintf(stderr, "Error: mislocated output redirection\n");
                                         return FAILED;
                                 }
                         }
@@ -297,7 +462,14 @@ char cmd_parser(char* cmd, string_vector* v)
                 }
                 if (!strcmp(v->items[i], "<"))
                 {
-                       
+                       for (int j = i-1; j > 0; j--)
+                        {
+                                if (!strcmp(v->items[j], "|"))
+                                {
+                                        fprintf(stderr, "Error: mislocated input redirection\n");
+                                        return FAILED;
+                                }
+                        }
                         int fd = open(v->items[i+1] , O_RDONLY);
                         
                         if (fd == -1)

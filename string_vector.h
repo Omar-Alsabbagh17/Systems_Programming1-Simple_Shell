@@ -12,5 +12,6 @@ typedef struct {
 
 void vec_init(string_vector *);
 void vec_add(string_vector *, void *);
+char* vec_pop(string_vector * );
 
 #endif

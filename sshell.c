@@ -183,7 +183,7 @@ int main(void)
                                                 close(fd[pipes_count-1][0]); 
                                                 close(fd[pipes_count-1][1]);
                                                 
-                                                int status;
+                                                //int status;
                                                 for (int j = 1; j < total_pipes+2; j++)
                                                         waitpid(pids[j], &pip_ret_status[j], 0);
                                                         
@@ -206,10 +206,10 @@ int main(void)
                                         if (chdir(abs_path) != 0)
                                         {
                                                 fprintf(stderr, "Error: no such directory\n");
-                                                fprintf(stderr, "+ completed 'pushd %s' [1]\n", v.items[i+1]);
+                                                fprintf(stderr, "+ completed 'pushd %s' [1]\n", (char*) v.items[i+1]);
                                         }
                                         else
-                                                fprintf(stderr, "+ completed 'pushd %s' [0]\n", v.items[i+1]);
+                                                fprintf(stderr, "+ completed 'pushd %s' [0]\n", (char*)v.items[i+1]);
                                 }
                                 else if (is_pushd)
                                 {
@@ -232,7 +232,7 @@ int main(void)
                                 {
                                         for (int i = 0; i < dir_stack.total; ++i)
                                         {
-                                                printf("%s\n", dir_stack.items[i]);
+                                                printf("%s\n", (char*)dir_stack.items[i]);
                                         }
                                         fprintf(stderr, "+ completed 'dirs' [0]\n");
                                 }

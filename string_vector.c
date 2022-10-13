@@ -21,6 +21,14 @@ void vec_add(string_vector *v, void *item)
     
 }
 
+char* vec_pop(string_vector * v)
+{
+    char* ret = v->items[v->total-1];
+    v->items[--v->total] = NULL;
+    return ret;
+    
+}
+
 static void vec_resize(string_vector *v, int capacity)
 {
     void **items = realloc(v->items, sizeof(void *) * capacity);

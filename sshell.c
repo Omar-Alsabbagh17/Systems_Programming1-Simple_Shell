@@ -225,8 +225,9 @@ int main(void)
                                                 fprintf(stderr, "Error: directory stack empty\n");
                                                 continue;
                                         }
-                                        char * popd_dir = vec_pop(&dir_stack);
-                                        chdir(popd_dir);
+                                        //char * popd_dir = vec_pop(&dir_stack);
+                                        vec_pop(&dir_stack);
+                                        chdir(dir_stack.items[dir_stack.total-1]);
                                         fprintf(stderr, "+ completed 'popd' [0]\n");
 
                                  }

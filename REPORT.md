@@ -8,7 +8,7 @@ This project implements a simple command-line interpreter called sshell which ac
 2. Check if the input command is a builtin command (pwd, cd , exit) or a regular command. if it's built-in command execute it, otherwise continue to next step.
 3. Parse the input command into tokens using user defined cmd_parser() function, and handle some fo error cases such missing command, input file, or output file.
 4. traverse the tokens, and see if a token is commands, argument, redirection or piping and handle it accordingly.
-5. if we encounter piping, then parent creates pipes and forks appropriate number of childs and stores their pid in struct. each child pipes it's input/output as      needed and then exectues. the parent waits for all childs to finish to collect their exit status and pritn it. 
+5. if we encounter piping, then parent creates pipes and forks appropriate number of childs and stores their pid in struct. each child, pipes it's input/output as      needed and then exectues. the parent waits for all childs to finish to collect their exit status and print it. 
 6. if their is not piping, then we do the standard fork(), exec(), wait() for the command and display the oput message. 
 
 ## fork(), exec(), wait()

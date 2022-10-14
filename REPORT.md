@@ -9,7 +9,7 @@ This project implements a simple command-line interpreter called sshell which ac
 3. Parse the input command into tokens using user defined cmd_parser() function, and handle some fo error cases such missing command, input file, or output file.
 4. traverse the tokens, and see if a token is commands, argument, redirection or piping and handle it accordingly.
 5. if we encounter piping, then parent creates pipes and forks appropriate number of childs and stores their pid in struct. each child, pipes it's input/output as      needed and then exectues. the parent waits for all childs to finish to collect their exit status and print it. 
-6. if their is not piping, then we do the standard fork(), exec(), wait() for the command and display the oput message. 
+6. if their is not piping, then we do the standard fork(), exec(), wait() for the command and display the output message. 
 
 ## fork(), exec(), wait()
 To execute the diffent commands entered by the user, we call the user defined execut function which take in the program struct as one of its arguments. The program struct holds one command and argumments of the user input command. The parent (shell) then creates a new process by calling fork and waits for child to come back to print its exit value. The child process calls execvp() and exectues the command for the user. The struct values then get set to NULL as the shell waits for a new command to be entered. 

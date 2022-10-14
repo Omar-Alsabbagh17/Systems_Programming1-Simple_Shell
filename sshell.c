@@ -13,7 +13,7 @@
 #define CMDLINE_MAX 512
 # define ARGS_MAX 16
 # define FAILED 1
-# define MAX_PIPE 10
+
 
 typedef struct
 {
@@ -22,19 +22,20 @@ typedef struct
 } program;
 
 
-char cmd_parser(char* , string_vector*); // returns an array of program
-int execute(program * , unsigned int ); 
+char cmd_parser(char* , string_vector*); // returns an arrya of tokens
+int execute(program * , unsigned int );
 
 int main(void)
 {
         char cmd[CMDLINE_MAX];
-        string_vector dir_stack;
+        string_vector dir_stack; // to store directory stack
         vec_init(&dir_stack);
-        char cwd[CMDLINE_MAX];
-        getcwd(cwd, sizeof(cwd));
-        vec_add(&dir_stack, cwd);
+        
+        char init_cwd[CMDLINE_MAX];
+        getcwd(init_cwd, sizeof(init_cwd));
+        vec_add(&dir_stack, init_cwd); // add current dir to dirrectoy stack
         pid_t pid;
-        int screen_stdout;
+        int terminal_stdout; // for storing terminal stdout
 
         while (1) {
                 char *nl;
@@ -71,6 +72,7 @@ int main(void)
                 }
                 else if (!strcmp(cmd, "pwd"))
                 {
+                        char cwd[CMDLINE_MAX];
                         if (getcwd(cwd, sizeof(cwd)) != NULL) 
                         {
                                 // executed sucessfully
@@ -87,6 +89,8 @@ int main(void)
 
                 else if (is_cd_command)
                 {
+                        char cwd[CMDLINE_MAX];
+                        /* extract the new directory from cmd*/
                         char* cmd_copy = (char*) malloc(strlen(cmd)+1);
                         strcpy(cmd_copy, cmd);
                         char * new_dir = strtok(cmd_copy, " ");
@@ -102,25 +106,27 @@ int main(void)
                         else
                         {
                                 fprintf(stderr, "+ completed '%s' [%d]\n", cmd, 0);
+                                getcwd(cwd, sizeof(cwd));
+                                dir_stack.items[dir_stack.total-1] = cwd;
                         }
                 }
                 /* ============ Regular command  =====================================================*/
                 
                 else{
-                        program prog;
-                        string_vector v;
-                        vec_init(&v);
+                        program prog; // to store a command + it's arguments
+                        string_vector v; // to store all tokens
+                        vec_init(&v); //initializes a vector
                         char* cmd_copy = (char*) malloc(strlen(cmd)+1);
                         strcpy(cmd_copy, cmd);
-                        char failed = cmd_parser(cmd_copy, &v);
+                        char failed = cmd_parser(cmd_copy, &v); // stores tokens in &v
                         if (failed)
                                 continue;
                         char is_command = 1; // to distinguish command from argument
-                        char is_out_redirection = 0;
-                        char is_pushd = 0;
-                        char finished_input_redirection = 0;
+                        char is_out_redirection = 0; // boolean
+                        char is_pushd = 0; // boolean
+                        char finished_input_redirection = 0; // boolean
                         unsigned int args_count = 0; // to keep track of arguments
-                        int pipes_count = 0;
+                        int pipes_count = 0; // to keep track of how many pipes we encounter so far
                         int total_pipes = 0; // total number of pipes in cmd
 
                         for (int i = 0; i < v.total; i++)
@@ -128,20 +134,22 @@ int main(void)
                                 if (!strcmp(v.items[i], "|"))
                                         total_pipes++;
                         }
+                        // added extra element, since we are not using zero-indexing
                         int fd[total_pipes+1][2];
                         pid_t pids[total_pipes+2];
-                        int pip_ret_status[total_pipes+2];
+                        int pip_ret_status[total_pipes+2]; //output status for each fork that is result of pipe
                         
                         for (int i = 0; i < v.total; i++)
                         {
                                 if (args_count >= ARGS_MAX)
                                 {
-                                        fprintf(stderr, "ERROR: too many arguments\n");
+                                        fprintf(stderr, "Error: too many arguments\n");
                                         break;
                                 }
 
                                 if ((total_pipes != 0) && (pipes_count == total_pipes) && (i == (v.total-1)))
                                 {
+                                        // we reached end of cmd, and we did encounter pipe
                                         if (is_command)
                                         {
                                                 prog.command= v.items[i];
@@ -167,7 +175,7 @@ int main(void)
                                                 }
                                                 if (is_out_redirection)
                                                 {       int fd = open(v.items[i], O_RDWR);
-                                                        screen_stdout = dup(STDOUT_FILENO);
+                                                        terminal_stdout = dup(STDOUT_FILENO);
                                                         dup2(fd, STDOUT_FILENO);
                                                         args_list[args_count-1]= NULL;
                                                 }
@@ -175,7 +183,7 @@ int main(void)
                                                     args_list[args_count]= NULL;
                                                 execvp(prog.command,  args_list);
                                         }
-                                        else
+                                        else // parent
                                         {
                                                 pids[pipes_count+1] = pid;
                                                 // close current pipe
@@ -199,19 +207,19 @@ int main(void)
                                 if (!strcmp(v.items[i], "pushd"))
                                 {
                                         is_pushd = 1;
-                                        char abs_path[CMDLINE_MAX];
-                                        getcwd(abs_path, sizeof(abs_path));
-                                        strcat(abs_path, "/");
-                                        strcat(abs_path, v.items[i+1]);
-                                        //printf("%s\n", abs_path);
-                                        vec_add(&dir_stack, abs_path);
+                                        char* filename = (char*)v.items[i+1];
+                                        char * abs_path = realpath(filename, NULL);
                                         if (chdir(abs_path) != 0)
                                         {
                                                 fprintf(stderr, "Error: no such directory\n");
                                                 fprintf(stderr, "+ completed 'pushd %s' [1]\n", (char*) v.items[i+1]);
                                         }
                                         else
+                                        {
+                                                vec_add(&dir_stack, abs_path);
                                                 fprintf(stderr, "+ completed 'pushd %s' [0]\n", (char*)v.items[i+1]);
+                                        }
+                                        
                                 }
                                 else if (is_pushd)
                                 {
@@ -278,15 +286,12 @@ int main(void)
                                 }
                                 else if (!strcmp(v.items[i], "|"))
                                 {
-                                        // excute
-                                        // store exit status in an array
-                                        // redirect 
                                         pipes_count++;
                                         pipe(fd[pipes_count]);
                                         pid = fork();
                                         if (!pid) //child
                                         {
-                                                if (pipes_count == 1)
+                                                if (pipes_count == 1) // if this is the first pipe
                                                 {
                                                         close(fd[pipes_count][0]); // no need for read access 
                                                         dup2(fd[pipes_count][1], STDOUT_FILENO); // redirect output to pipe
@@ -323,34 +328,30 @@ int main(void)
                                                        execvp(prog.command,  args_list);      
                                                 }
                                                 
-
                                         }
                                         else // parent
                                         {
                                                 pids[pipes_count] = pid;
-                                                is_command = 1;
+                                                is_command = 1; // next token is new command
                                                 prog.command = NULL;
                                                 continue;
-                                        }
-                                        
-                                }
+                                        }    
+                                } 
+                                /*  == end of pipe handling block ==  */
                                 
-                                
-
-
-                                else if ((i == (v.total-1)) && (total_pipes == 0)) // reached end of cmd and no pipes
+                                else if ((i == (v.total-1)) && (total_pipes == 0)) 
                                 {                                        
+                                        // reached end of cmd and didn't encounter pipes
                                         if (is_out_redirection)
                                         {       int fd = open(v.items[i], O_RDWR);
-                                                screen_stdout = dup(STDOUT_FILENO);
+                                                terminal_stdout = dup(STDOUT_FILENO);
                                                 dup2(fd, STDOUT_FILENO);
                                                 retval = execute(&prog, args_count);
                                                 // restore stdout back to terminal
-                                                dup2(screen_stdout, STDOUT_FILENO);
-                                                close(screen_stdout);
+                                                dup2(terminal_stdout, STDOUT_FILENO);
+                                                close(terminal_stdout);
                                                 close(fd);
-                                                fprintf(stderr, "+ completed '%s' [%d]\n", cmd, retval);
-                                                
+                                                fprintf(stderr, "+ completed '%s' [%d]\n", cmd, retval);   
                                         }
                                         
                                         else
@@ -383,7 +384,7 @@ int main(void)
 char cmd_parser(char* cmd, string_vector* v)
 {
         char * token = strtok(cmd, " ");
-        char found_sub_token = 0;
+        char found_sub_token = 0; // boolean
         
         while (token != NULL)
         {
@@ -423,22 +424,22 @@ char cmd_parser(char* cmd, string_vector* v)
         }
         if (!strcmp(v->items[0], "|") || !strcmp(v->items[0], ">") || !strcmp(v->items[0], "<"))
         {
-                fprintf(stderr, "ERROR: missing command\n");
+                fprintf(stderr, "Error: missing command\n");
                 return FAILED; 
         }
         if (!strcmp(v->items[v->total-1], "|"))
         {
-                fprintf(stderr, "ERROR: missing command\n");
+                fprintf(stderr, "Error: missing command\n");
                 return FAILED; 
         }
         if (!strcmp(v->items[v->total-1], ">"))
         {
-                fprintf(stderr, "ERROR: no output file\n");
+                fprintf(stderr, "Error: no output file\n");
                 return FAILED; 
         }
         if (!strcmp(v->items[v->total-1], "<"))
         {
-                fprintf(stderr, "ERROR: no input file\n");
+                fprintf(stderr, "Error: no input file\n");
                 return FAILED; 
         }
         for (int i = 0; i < v->total; i++)
@@ -457,7 +458,7 @@ char cmd_parser(char* cmd, string_vector* v)
                         int fd = open(v->items[i+1] , O_WRONLY | O_CREAT | O_TRUNC, 0777);
                         if (fd == -1)
                         {
-                                fprintf(stderr,"ERROR: cannot open output file\n");
+                                fprintf(stderr,"Error: cannot open output file\n");
                                 close(fd);
                                 return FAILED;
                         }
@@ -477,7 +478,7 @@ char cmd_parser(char* cmd, string_vector* v)
                         
                         if (fd == -1)
                         {
-                                fprintf(stderr,"ERROR: cannot open input file\n");
+                                fprintf(stderr,"Error: cannot open input file\n");
                                 close(fd);
                                 return FAILED;
                         }
@@ -508,7 +509,7 @@ int execute(program * prog, unsigned int num_args)
                 int out = execvp(prog->command,  args_list); // if fails, returns -1
                 if (out == -1)
                 {
-                        printf("ERROR: command not found\n");
+                        printf("Error: command not found\n");
                         return 1;
                 }
                 
